@@ -238,6 +238,31 @@ func (s *PullRequestsService) Create(ctx context.Context, owner string, repo str
 	return p, resp, nil
 }
 
+// Tries to create a pull request, and if it already exists, returns the existing pull request.
+//
+// GitHub API docs: https://developer.github.com/v3/pulls/#create-a-pull-request
+// GitHub API docs: https://developer.github.com/v3/pulls/#list-pull-requests
+func (s *PullRequestsService) CreateOrGet(ctx context.Context, owner string, repo string, pull *NewPullRequest) (*PullRequest, *Response, error) {
+	pr, resp, err := s.Create(ctx, owner, repo, pull)
+	if pr != nil {
+		return pr, resp, err
+	}
+	// When a PR for (pull.Head, pull.Base) already exists, Github returns a "422 Unprocessable Entity" status
+	// "A pull request already exists for..."
+	if pr == nil && resp.StatusCode == 422 {
+		listOptions := PullRequestListOptions{Base: *pull.Base, Head: *pull.Head}
+		existing_prs, resp, err := s.List(ctx, owner, repo, &listOptions)
+		if existing_prs != nil && len(existing_prs) > 0 {
+			return existing_prs[0], resp, err // It's OK to return only PR: it should be unique
+		}
+		if err != nil {
+			return nil, resp, err
+		}
+		return nil, resp, fmt.Errorf("Github rejected the creation of the pull request, but we couldn't find any PR for options %v", *pull)
+	}
+	return pr, resp, err
+}
+
 type pullRequestUpdate struct {
 	Title               *string `json:"title,omitempty"`
 	Body                *string `json:"body,omitempty"`
